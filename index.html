@@ -378,13 +378,14 @@ async function renderNoAccess(email, m){
       : `<p>¡Listo! Tu solicitud de acceso para <strong>${esc(email)}</strong> fue enviada.</p><p class="hint">Podrás ver los videos en cuanto el administrador la apruebe. Vuelve a entrar más tarde.</p>`}
     <button class="btn ghost" id="nRetry" data-nav style="justify-content:center">Revisar de nuevo</button>
     <button class="btn ghost sm" id="nOut" data-nav style="justify-content:center">Cerrar sesión</button>
-    <details style="margin-top:1.5rem;text-align:left;color:var(--muted);font-size:.85em">
+    <details id="nOwner" hidden style="margin-top:1.5rem;text-align:left;color:var(--muted);font-size:.85em">
       <summary>¿Eres el dueño de la plataforma?</summary>
       <p>Si todavía no existe ningún administrador, puedes reclamar ese rol con esta cuenta. Solo funciona una vez.</p>
       <button class="btn primary sm" id="nClaim" data-nav>Hacerme administrador</button>
     </details>
   </div></main>`;
   $("#nRetry").onclick = () => { S.miembro=null; route(S.session); };
+  sb.rpc("st_hay_admin").then(({ data, error }) => { if(!error && data === false) $("#nOwner") && ($("#nOwner").hidden = false); });
   $("#nOut").onclick = () => sb.auth.signOut();
   $("#nClaim").onclick = async () => {
     const { data, error } = await sb.rpc("st_reclamar_admin");
