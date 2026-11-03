@@ -218,7 +218,7 @@ async function bunny(action, extra = {}){
 }
 async function bunnyStatus(){
   if(S.bunny !== undefined) return S.bunny;
-  try{ S.bunny = await bunny("status"); } catch(_){ S.bunny = { configured:false }; }
+  try{ S.bunny = await bunny("status"); } catch(err){ S.bunny = { configured:false, error:err.message }; }
   return S.bunny;
 }
 function subirABunny(file, titulo, onProgress){
@@ -590,7 +590,9 @@ function admVideos(box, editing){
         <span class="or">o</span>
         <label class="f">URL externa (MP4 o HLS .m3u8)<input id="vUrl" type="url" placeholder="https://…" value="${esc(e.video_url)}" data-nav></label>
         ${B ? '<p class="hint"><span class="pill ok">Bunny conectado</span> Los archivos se suben a Bunny Stream, sin límite de tamaño práctico. Después de subir, Bunny tarda unos minutos en procesar el video antes de que se pueda ver.</p>'
-       : `<p class="hint">El plan gratuito de Supabase acepta archivos de hasta ${LIMITE_MB} MB. Conecta Bunny para subir videos grandes.</p>`}
+       : `<p class="hint">El plan gratuito de Supabase acepta archivos de hasta ${LIMITE_MB} MB. Conecta Bunny para subir videos grandes.</p>
+          ${S.bunny.missing?.length ? `<div class="msg err">Bunny no está conectado. En Supabase → Edge Functions → Secrets falta: <b>${S.bunny.missing.map(esc).join(", ")}</b>. Revisa que el nombre sea exacto, en mayúsculas y sin espacios.</div>` : ""}
+          ${S.bunny.error ? `<div class="msg err">No se pudo consultar Bunny: ${esc(S.bunny.error)}</div>` : ""}`}
         <div id="vProg" hidden style="height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden"><i style="display:block;height:100%;width:0;background:var(--accent);transition:width .3s"></i></div>
       </div>
       <div class="panel full" style="background:var(--bg)">
