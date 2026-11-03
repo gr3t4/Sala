@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d111a">
+<title>Sala · Videos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+<style>
+/* Sala de proyección: fondo tinta, luz ámbar del proyector como único acento; filas horizontales tipo cartelera */
+:root{
+  --bg:#0d111a; --surface:#161c28; --surface-2:#212a3a; --line:#2c3648;
+  --fg:#eef0f4; --muted:#8f99ac; --accent:#f2b33d; --accent-ink:#1a1306;
+  --danger:#e5604f; --ok:#4fbf8b;
+  --display:"Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body:"Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gutter:clamp(16px, 4vw, 64px);
+  --card-w:clamp(160px, 18vw, 300px);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:clamp(14px,1vw + 8px,20px);line-height:1.5}
+img{max-width:100%;display:block}
+[hidden]{display:none!important}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent)}
+:focus{outline:none}
+:focus-visible,[data-nav]:focus{outline:3px solid var(--accent);outline-offset:3px}
+.wrap{padding-left:max(var(--gutter),env(safe-area-inset-left,0px));padding-right:max(var(--gutter),env(safe-area-inset-right,0px))}
+
+/* Botones */
+.btn{display:inline-flex;align-items:center;gap:.5em;border:0;border-radius:6px;padding:.7em 1.3em;font-weight:600;background:var(--surface-2);color:var(--fg);transition:transform .15s,background .15s}
+.btn:hover{background:var(--line)}
+.btn.primary{background:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{background:#ffc657}
+.btn.ghost{background:transparent;border:1px solid var(--line)}
+.btn.danger{background:transparent;color:var(--danger);border:1px solid var(--danger)}
+.btn.sm{padding:.4em .8em;font-size:.85em}
+.btn:focus{transform:scale(1.04)}
+.btn svg{width:1.1em;height:1.1em}
+
+/* Barra superior */
+header.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:1.2rem;padding-block:.8rem;padding-top:calc(.8rem + env(safe-area-inset-top,0px));background:linear-gradient(var(--bg) 60%,transparent)}
+.logo{font-family:var(--display);font-weight:800;font-size:1.9em;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);line-height:1}
+.nav{display:flex;gap:.3rem;flex:1;flex-wrap:wrap}
+.nav button{background:none;border:0;padding:.4em .8em;border-radius:6px;color:var(--muted);font-weight:600}
+.nav button.on{color:var(--fg)}
+.nav button:hover{color:var(--fg)}
+.search{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.45em .8em;width:min(260px,40vw)}
+@media (max-width:640px){header.top{flex-wrap:wrap}.search{width:100%;order:3}.logo{font-size:1.5em}}
+
+/* Hero */
+.hero{position:relative;min-height:clamp(260px,52vh,620px);display:flex;align-items:flex-end;margin-top:-4rem;padding-block:6rem 2.5rem;background:var(--surface) center/cover no-repeat}
+.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(13,17,26,.95) 0%,rgba(13,17,26,.55) 55%,rgba(13,17,26,.1)),linear-gradient(0deg,var(--bg) 0%,transparent 40%)}
+.hero > div{position:relative;z-index:1;max-width:38rem}
+.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:.75em;font-weight:700;color:var(--accent)}
+.hero h1{font-family:var(--display);font-weight:800;font-size:clamp(2.4rem,6vw,5rem);line-height:.95;margin:.2em 0 .3em;text-wrap:balance;text-transform:uppercase}
+.hero p{color:#c9cfdb;margin:0 0 1.2em;max-width:60ch}
+.actions{display:flex;gap:.6rem;flex-wrap:wrap}
+
+/* Filas */
+.row{margin-block:1.6rem}
+.row h2{font-family:var(--display);font-weight:700;font-size:1.6em;letter-spacing:.03em;text-transform:uppercase;margin:0 0 .5rem}
+.strip{display:flex;gap:clamp(10px,1vw,18px);overflow-x:auto;scroll-snap-type:x proximity;padding-block:8px 14px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.card{flex:0 0 var(--card-w);scroll-snap-align:start;background:none;border:0;padding:0;text-align:left;border-radius:8px;transition:transform .18s}
+.card:focus,.card:hover{transform:scale(1.05)}
+.thumb{position:relative;aspect-ratio:16/9;max-width:100%;border-radius:8px;overflow:hidden;background:var(--surface-2)}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.thumb .ph{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:clamp(1.1em,1.6vw,1.9em);overflow:hidden;overflow-wrap:anywhere;color:var(--line);text-transform:uppercase;padding:.3em;text-align:center;line-height:1}
+.thumb .bar{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.18)}
+.thumb .bar i{display:block;height:100%;background:var(--accent)}
+.thumb .tag{position:absolute;top:6px;left:6px;background:var(--danger);color:#fff;font-size:.7em;font-weight:700;padding:.1em .5em;border-radius:4px}
+.card .t{font-weight:600;margin-top:.45em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .m{color:var(--muted);font-size:.82em;font-variant-numeric:tabular-nums}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--card-w),1fr));gap:1.2rem 1rem}
+.grid .card{flex:none}
+.empty{color:var(--muted);padding:2rem 0}
+.empty strong{display:block;color:var(--fg);font-size:1.15em;margin-bottom:.3em}
+
+/* Modales */
+.overlay{position:fixed;inset:0;z-index:50;background:rgba(5,7,12,.82);display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));overflow:auto}
+.sheet{background:var(--surface);border-radius:12px;width:min(820px,100%);overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.sheet .cover{aspect-ratio:16/9;max-width:100%;background:var(--surface-2) center/cover}
+.sheet .body{padding:1.4rem 1.6rem 1.8rem;display:grid;gap:.8rem}
+.sheet h3{font-family:var(--display);font-size:2.2em;font-weight:800;text-transform:uppercase;line-height:1;margin:0;text-wrap:balance}
+.meta{color:var(--muted);font-size:.9em;display:flex;gap:1em;flex-wrap:wrap}
+.desc{white-space:pre-wrap;margin:0;max-width:65ch}
+
+/* Reproductor */
+#player{position:fixed;inset:0;z-index:60;background:#000;display:flex;flex-direction:column}
+#player video{flex:1;width:100%;min-height:0;background:#000}
+#player .pbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:1rem;padding:calc(.8rem + env(safe-area-inset-top,0px)) max(1rem,env(safe-area-inset-right,0px)) 2rem max(1rem,env(safe-area-inset-left,0px));background:linear-gradient(rgba(0,0,0,.75),transparent);transition:opacity .3s;z-index:2}
+#player.idle .pbar{opacity:0}
+#player .pbar span{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Login */
+.auth{min-height:100vh;display:grid;place-items:center;padding-block:2rem;background:radial-gradient(ellipse at 50% -10%,rgba(242,179,61,.18),transparent 60%),var(--bg)}
+.auth-box{width:min(420px,100%);display:grid;gap:1rem}
+.auth-box .logo{font-size:3.4em;text-align:center}
+.auth-box p.sub{text-align:center;color:var(--muted);margin:-.4rem 0 .6rem}
+.tabs{display:flex;background:var(--surface);border-radius:8px;padding:4px}
+.tabs button{flex:1;border:0;background:none;padding:.55em;border-radius:6px;color:var(--muted);font-weight:600}
+.tabs button.on{background:var(--surface-2);color:var(--fg)}
+label.f{display:grid;gap:.3em;font-size:.88em;color:var(--muted);font-weight:500}
+label.f input,label.f select,label.f textarea{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.65em .8em;font-size:1rem;color:var(--fg)}
+label.f input,label.f select,label.f textarea{width:100%;min-width:0}
+.search{min-width:0;flex-shrink:1}
+label.f input:focus,label.f select:focus,label.f textarea:focus{border-color:var(--accent);outline:none}
+.msg{font-size:.9em;padding:.6em .8em;border-radius:6px;background:var(--surface-2)}
+.msg.err{color:#ffb3a8;background:rgba(229,96,79,.15)}
+.msg.ok{color:#a8ecca;background:rgba(79,191,139,.15)}
+
+/* Admin */
+.admin{padding-block:1rem 4rem;display:grid;gap:1.4rem}
+.admin > *,#adm{min-width:0;display:grid;gap:1.4rem}
+.admin > h1{display:block}
+.admin h1{font-family:var(--display);font-size:2.6em;text-transform:uppercase;margin:0;line-height:1}
+.subtabs{display:flex;gap:.4rem;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:.6rem}
+.subtabs button{border:0;background:none;color:var(--muted);font-weight:600;padding:.4em .9em;border-radius:6px}
+.subtabs button.on{background:var(--surface-2);color:var(--fg)}
+.panel{background:var(--surface);border-radius:10px;padding:1.2rem;display:grid;gap:1rem;min-width:0}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem}
+.form-grid .full{grid-column:1/-1}
+.check{display:flex;align-items:center;gap:.5em;font-size:.95em}
+.check input{width:1.15em;height:1.15em;accent-color:var(--accent)}
+.or{font-size:.8em;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.92em}
+th,td{text-align:left;padding:.6em .7em;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--muted);font-weight:600;font-size:.82em;text-transform:uppercase;letter-spacing:.06em}
+td .mini{width:96px;aspect-ratio:16/9;border-radius:4px;object-fit:cover;background:var(--surface-2)}
+.pill{display:inline-block;font-size:.75em;font-weight:700;padding:.15em .6em;border-radius:99px;text-transform:uppercase;letter-spacing:.04em}
+.pill.ok{background:rgba(79,191,139,.18);color:var(--ok)}
+.pill.off{background:rgba(143,153,172,.18);color:var(--muted)}
+.pill.adm{background:rgba(242,179,61,.18);color:var(--accent)}
+.row-actions{display:flex;gap:.4rem;flex-wrap:wrap}
+.hint{font-size:.85em;color:var(--muted);margin:0}
+
+#toast{position:fixed;left:50%;bottom:calc(1.5rem + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--surface-2);color:var(--fg);padding:.7em 1.2em;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:90;font-weight:500;max-width:calc(100% - 32px)}
+.spin{display:grid;place-items:center;min-height:60vh;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div id="app"><div class="spin">Cargando…</div></div>
+
+<div id="player" hidden>
+  <div class="pbar">
+    <button class="btn sm" id="pClose" data-nav aria-label="Regresar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg> Regresar
+    </button>
+    <span id="pTitle"></span>
+  </div>
+  <video id="pVideo" controls playsinline controlslist="nodownload" disablepictureinpicture></video>
+</div>
+<div id="toast" hidden></div>
+
+<script>
+/* ============ CONFIGURACIÓN ============ */
+const NOMBRE = "Sala";                       // Nombre visible de tu plataforma
+const SUPABASE_URL = "https://xbxpufhqijgrxlqzthiy.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhieHB1ZmhxaWpncnhscXp0aGl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NzIzMjUsImV4cCI6MjA4NzQ0ODMyNX0.O5COe3SjOSD4XzpIbmkUIpXCWz3iqF7YNZoeO3xNXc0";
+const LIMITE_MB = 50;                         // Límite por archivo del plan gratuito de Supabase
+/* ======================================= */
+
+document.title = NOMBRE;
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = (s, r = document) => r.querySelector(s);
+const app = $("#app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const S = { session:null, miembro:null, cats:[], videos:[], prog:{}, lista:new Set(), view:"inicio", q:"", adminTab:"videos" };
+
+function toast(t){ const el=$("#toast"); el.textContent=t; el.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>el.hidden=true,3200); }
+function fmtDur(s){ if(!s) return ""; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return h?`${h} h ${m} min`:`${Math.max(m,1)} min`; }
+function focusFirst(root=document){ const el=root.querySelector("[data-nav]"); el && el.focus({preventScroll:false}); }
+
+/* ============ SESIÓN ============ */
+sb.auth.onAuthStateChange((_ev, session) => { setTimeout(() => route(session), 0); });
+
+async function route(session){
+  const prevUser = S.session?.user?.id;
+  S.session = session;
+  if(!session){ return renderAuth(); }
+  if(prevUser === session.user.id && S.miembro) return; // refresh de token
+  app.innerHTML = '<div class="spin">Cargando…</div>';
+  const email = (session.user.email||"").toLowerCase();
+  const { data: m } = await sb.from("st_miembros").select("*").eq("email", email).maybeSingle();
+  S.miembro = m;
+  if(!m || !m.activo) return renderNoAccess(email);
+  await loadCatalog();
+  renderShell();
+}
+
+async function loadCatalog(){
+  const [c, v, p, l] = await Promise.all([
+    sb.from("st_categorias").select("*").order("orden").order("nombre"),
+    sb.from("st_videos").select("*").order("created_at", { ascending:false }),
+    sb.from("st_progreso").select("*"),
+    sb.from("st_mi_lista").select("video_id")
+  ]);
+  S.cats = c.data || []; S.videos = v.data || [];
+  S.prog = Object.fromEntries((p.data||[]).map(r => [r.video_id, r]));
+  S.lista = new Set((l.data||[]).map(r => r.video_id));
+}
+const isAdmin = () => S.miembro?.rol === "admin";
+const visibles = () => S.videos.filter(v => v.publicado);
+
+/* ============ LOGIN ============ */
+function renderAuth(mode="entrar", note=""){
+  S.miembro = null;
+  app.innerHTML = `
+  <main class="auth wrap">
+    <form class="auth-box" id="fAuth" novalidate>
+      <div class="logo">${esc(NOMBRE)}</div>
+      <p class="sub">Videos exclusivos para miembros</p>
+      <div class="tabs" role="tablist">
+        <button type="button" data-nav data-mode="entrar" class="${mode==="entrar"?"on":""}">Entrar</button>
+        <button type="button" data-nav data-mode="crear" class="${mode==="crear"?"on":""}">Crear cuenta</button>
+      </div>
+      <label class="f">Correo<input id="aEmail" type="email" autocomplete="email" required data-nav></label>
+      <label class="f">Contraseña<input id="aPass" type="password" autocomplete="${mode==="crear"?"new-password":"current-password"}" minlength="6" required data-nav></label>
+      ${mode==="crear" ? '<p class="hint">Usa el mismo correo con el que te dieron acceso.</p>' : ""}
+      <div id="aMsg" ${note?"":"hidden"} class="msg ok">${esc(note)}</div>
+      <button class="btn primary" data-nav type="submit" style="justify-content:center">${mode==="crear"?"Crear cuenta":"Entrar"}</button>
+      ${mode==="entrar" ? '<button type="button" class="btn ghost sm" id="aReset" data-nav style="justify-content:center">Olvidé mi contraseña</button>' : ""}
+    </form>
+  </main>`;
+  app.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => renderAuth(b.dataset.mode));
+  const msg = (t, ok) => { const m=$("#aMsg"); m.hidden=false; m.className="msg "+(ok?"ok":"err"); m.textContent=t; };
+  $("#aReset")?.addEventListener("click", async () => {
+    const email = $("#aEmail").value.trim();
+    if(!email) return msg("Escribe tu correo y vuelve a tocar el botón.");
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    error ? msg(error.message) : msg("Te enviamos un enlace para cambiar tu contraseña.", true);
+  });
+  $("#fAuth").onsubmit = async e => {
+    e.preventDefault();
+    const email = $("#aEmail").value.trim().toLowerCase(), password = $("#aPass").value;
+    if(!email || password.length < 6) return msg("Escribe tu correo y una contraseña de al menos 6 caracteres.");
+    const btn = e.submitter; btn.disabled = true;
+    if(mode === "crear"){
+      const { data, error } = await sb.auth.signUp({ email, password, options:{ emailRedirectTo: location.origin + location.pathname } });
+      btn.disabled = false;
+      if(error) return msg(traducir(error.message));
+      if(!data.session) msg("Cuenta creada. Revisa tu correo y confirma para poder entrar.", true);
+    } else {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      btn.disabled = false;
+      if(error) msg(traducir(error.message));
+    }
+  };
+  setTimeout(() => $("#aEmail")?.focus(), 50);
+}
+function traducir(m){
+  if(/Invalid login/i.test(m)) return "Correo o contraseña incorrectos.";
+  if(/already registered/i.test(m)) return "Ese correo ya tiene cuenta. Entra con tu contraseña.";
+  if(/Email not confirmed/i.test(m)) return "Confirma tu correo con el enlace que te enviamos.";
+  return m;
+}
+
+// Recuperación de contraseña
+sb.auth.onAuthStateChange(async (ev) => {
+  if(ev !== "PASSWORD_RECOVERY") return;
+  setTimeout(() => {
+    app.innerHTML = `<main class="auth wrap"><form class="auth-box" id="fNew">
+      <div class="logo">${esc(NOMBRE)}</div><p class="sub">Escribe tu nueva contraseña</p>
+      <label class="f">Nueva contraseña<input id="nPass" type="password" minlength="6" autocomplete="new-password" data-nav></label>
+      <button class="btn primary" data-nav style="justify-content:center">Guardar</button></form></main>`;
+    $("#fNew").onsubmit = async e => { e.preventDefault();
+      const { error } = await sb.auth.updateUser({ password: $("#nPass").value });
+      if(error) return toast(error.message);
+      toast("Contraseña actualizada."); S.miembro=null; route(S.session); };
+  }, 10);
+});
+
+function renderNoAccess(email){
+  app.innerHTML = `
+  <main class="auth wrap"><div class="auth-box" style="text-align:center">
+    <div class="logo">${esc(NOMBRE)}</div>
+    <p>Tu cuenta <strong>${esc(email)}</strong> todavía no tiene acceso.</p>
+    <p class="hint">Pide al administrador que te dé de alta con este correo. Cuando lo haga, vuelve a entrar.</p>
+    <button class="btn ghost" id="nRetry" data-nav style="justify-content:center">Ya me dieron acceso</button>
+    <button class="btn ghost sm" id="nOut" data-nav style="justify-content:center">Cerrar sesión</button>
+    <details style="margin-top:1.5rem;text-align:left;color:var(--muted);font-size:.85em">
+      <summary>¿Eres el dueño de la plataforma?</summary>
+      <p>Si todavía no existe ningún administrador, puedes reclamar ese rol con esta cuenta. Solo funciona una vez.</p>
+      <button class="btn primary sm" id="nClaim" data-nav>Hacerme administrador</button>
+    </details>
+  </div></main>`;
+  $("#nRetry").onclick = () => { S.miembro=null; route(S.session); };
+  $("#nOut").onclick = () => sb.auth.signOut();
+  $("#nClaim").onclick = async () => {
+    const { data, error } = await sb.rpc("st_reclamar_admin");
+    if(error) return toast(error.message);
+    if(!data) return toast("Ya hay un administrador. Pídele acceso.");
+    toast("Listo, ahora eres administrador."); S.miembro=null; route(S.session);
+  };
+  focusFirst(app);
+}
+
+/* ============ CASCARÓN ============ */
+function renderShell(){
+  app.innerHTML = `
+  <header class="top wrap">
+    <div class="logo">${esc(NOMBRE)}</div>
+    <nav class="nav">
+      <button data-nav data-view="inicio">Inicio</button>
+      <button data-nav data-view="milista">Mi lista</button>
+      ${isAdmin() ? '<button data-nav data-view="admin">Administrar</button>' : ""}
+      <button data-nav id="bOut">Salir</button>
+    </nav>
+    <input class="search" id="q" type="search" placeholder="Buscar videos" data-nav value="${esc(S.q)}">
+  </header>
+  <main id="view"></main>`;
+  app.querySelectorAll("[data-view]").forEach(b => b.onclick = () => go(b.dataset.view));
+  $("#bOut").onclick = () => sb.auth.signOut();
+  $("#q").oninput = e => { S.q = e.target.value; go(S.q ? "buscar" : "inicio", true); };
+  go(S.view === "buscar" ? "inicio" : S.view);
+}
+function go(view, keepFocus){
+  S.view = view;
+  app.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
+  const v = $("#view");
+  if(view === "inicio") renderHome(v);
+  else if(view === "milista") renderGrid(v, "Mi lista", visibles().filter(x => S.lista.has(x.id)), "Agrega videos con el botón “Mi lista” para encontrarlos aquí.");
+  else if(view === "buscar"){ const q=S.q.toLowerCase(); renderGrid(v, `Resultados para “${S.q}”`, visibles().filter(x => (x.titulo+" "+(x.descripcion||"")).toLowerCase().includes(q)), "No hay videos con ese nombre."); }
+  else if(view === "admin") renderAdmin(v);
+  if(!keepFocus) window.scrollTo(0,0);
+}
+
+/* ============ INICIO ============ */
+function card(v){
+  const p = S.prog[v.id];
+  const pct = p && p.duracion ? Math.min(100, p.segundos / p.duracion * 100) : 0;
+  return `<button class="card" data-nav data-id="${v.id}">
+    <div class="thumb">
+      ${v.miniatura_url ? `<img loading="lazy" src="${esc(v.miniatura_url)}" alt="">` : `<div class="ph">${esc(v.titulo)}</div>`}
+      ${!v.publicado ? '<span class="tag">Oculto</span>' : ""}
+      ${pct > 1 ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
+    </div>
+    <div class="t">${esc(v.titulo)}</div>
+    <div class="m">${fmtDur(v.duracion_seg)}</div>
+  </button>`;
+}
+function row(title, list){ return list.length ? `<section class="row wrap"><h2>${esc(title)}</h2><div class="strip">${list.map(card).join("")}</div></section>` : ""; }
+function bindCards(root){ root.querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.id)); }
+
+function renderHome(v){
+  const vids = visibles();
+  if(!vids.length){
+    v.innerHTML = `<div class="wrap empty" style="padding-top:4rem"><strong>Aún no hay videos publicados.</strong>
+      ${isAdmin() ? 'Ve a <b>Administrar</b> para crear tu primera categoría y subir un video.' : "Pronto habrá contenido aquí."}</div>`;
+    return;
+  }
+  const hero = vids.find(x => x.destacado) || vids[0];
+  const seguir = vids.filter(x => { const p=S.prog[x.id]; return p && p.segundos > 10 && (!p.duracion || p.segundos < p.duracion - 20); })
+                     .sort((a,b) => new Date(S.prog[b.id].updated_at) - new Date(S.prog[a.id].updated_at));
+  let html = `
+  <section class="hero wrap" style="${hero.miniatura_url ? `background-image:url('${esc(hero.miniatura_url)}')` : ""}">
+    <div>
+      <div class="eyebrow">${esc(S.cats.find(c => c.id === hero.categoria_id)?.nombre || "Destacado")}</div>
+      <h1>${esc(hero.titulo)}</h1>
+      ${hero.descripcion ? `<p>${esc(hero.descripcion.slice(0,220))}${hero.descripcion.length>220?"…":""}</p>` : ""}
+      <div class="actions">
+        <button class="btn primary" data-nav id="hPlay">${icoPlay} ${S.prog[hero.id]?.segundos > 10 ? "Continuar" : "Reproducir"}</button>
+        <button class="btn" data-nav id="hInfo">Más información</button>
+      </div>
+    </div>
+  </section>`;
+  html += row("Seguir viendo", seguir);
+  html += row("Agregados recientemente", vids.slice(0, 15));
+  S.cats.forEach(c => { html += row(c.nombre, vids.filter(x => x.categoria_id === c.id)); });
+  html += row("Otros", vids.filter(x => !x.categoria_id || !S.cats.some(c => c.id === x.categoria_id)));
+  v.innerHTML = html;
+  $("#hPlay").onclick = () => play(hero);
+  $("#hInfo").onclick = () => openDetail(hero.id);
+  bindCards(v);
+  if(!document.activeElement || document.activeElement === document.body) $("#hPlay").focus({preventScroll:true});
+}
+function renderGrid(v, title, list, emptyMsg){
+  v.innerHTML = `<section class="wrap row"><h2>${esc(title)}</h2>
+    ${list.length ? `<div class="grid">${list.map(card).join("")}</div>` : `<div class="empty">${esc(emptyMsg)}</div>`}</section>`;
+  bindCards(v);
+}
+const icoPlay = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
+
+/* ============ DETALLE ============ */
+let lastFocus = null;
+function openDetail(id){
+  const v = S.videos.find(x => x.id === id); if(!v) return;
+  lastFocus = document.activeElement;
+  const p = S.prog[v.id], cont = p?.segundos > 10 && (!p.duracion || p.segundos < p.duracion - 20);
+  const ov = document.createElement("div");
+  ov.className = "overlay"; ov.dataset.modal = "1";
+  ov.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(v.titulo)}">
+    <div class="cover" style="${v.miniatura_url ? `background-image:url('${esc(v.miniatura_url)}')` : ""}"></div>
+    <div class="body">
+      <h3>${esc(v.titulo)}</h3>
+      <div class="meta">${[S.cats.find(c=>c.id===v.categoria_id)?.nombre, fmtDur(v.duracion_seg), cont ? `Vas en ${fmtDur(p.segundos)}` : ""].filter(Boolean).map(esc).join("<span>·</span>")}</div>
+      <div class="actions">
+        <button class="btn primary" data-nav id="dPlay">${icoPlay} ${cont ? "Continuar" : "Reproducir"}</button>
+        ${cont ? '<button class="btn" data-nav id="dStart">Desde el inicio</button>' : ""}
+        <button class="btn" data-nav id="dList">${S.lista.has(v.id) ? "✓ En mi lista" : "+ Mi lista"}</button>
+        <button class="btn ghost" data-nav id="dClose">Cerrar</button>
+      </div>
+      ${v.descripcion ? `<p class="desc">${esc(v.descripcion)}</p>` : ""}
+    </div></div>`;
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); lastFocus?.focus?.(); };
+  ov.addEventListener("click", e => { if(e.target === ov) close(); });
+  ov.close = close;
+  $("#dClose", ov).onclick = close;
+  $("#dPlay", ov).onclick = () => { close(); play(v); };
+  $("#dStart", ov)?.addEventListener("click", () => { close(); play(v, true); });
+  $("#dList", ov).onclick = async e => {
+    const btn = e.currentTarget;
+    if(S.lista.has(v.id)){ await sb.from("st_mi_lista").delete().eq("video_id", v.id); S.lista.delete(v.id); btn.textContent="+ Mi lista"; }
+    else { await sb.from("st_mi_lista").insert({ video_id:v.id, user_id:S.session.user.id }); S.lista.add(v.id); btn.textContent="✓ En mi lista"; }
+    if(S.view === "milista") go("milista", true);
+  };
+  $("#dPlay", ov).focus();
+}
+
+/* ============ REPRODUCTOR ============ */
+const P = { el:$("#player"), video:$("#pVideo"), hls:null, cur:null, lastSave:0, idleT:null };
+async function play(v, fromStart){
+  let src = v.video_url;
+  if(v.video_path){
+    const { data, error } = await sb.storage.from("st-videos").createSignedUrl(v.video_path, 6*3600);
+    if(error) return toast("No se pudo abrir el video: " + error.message);
+    src = data.signedUrl;
+  }
+  if(!src) return toast("Este video no tiene archivo.");
+  lastFocus = document.activeElement;
+  P.cur = v; P.lastSave = 0;
+  $("#pTitle").textContent = v.titulo;
+  P.el.hidden = false;
+  const vid = P.video;
+  if(P.hls){ P.hls.destroy(); P.hls = null; }
+  if(/\.m3u8(\?|$)/i.test(src) && !vid.canPlayType("application/vnd.apple.mpegurl") && window.Hls?.isSupported()){
+    P.hls = new Hls(); P.hls.loadSource(src); P.hls.attachMedia(vid);
+  } else vid.src = src;
+  const p = S.prog[v.id];
+  vid.onloadedmetadata = () => {
+    if(!fromStart && p && p.segundos > 10 && p.segundos < vid.duration - 20) vid.currentTime = p.segundos;
+    if(!v.duracion_seg && isAdmin() && isFinite(vid.duration)) sb.from("st_videos").update({ duracion_seg: Math.round(vid.duration) }).eq("id", v.id).then(()=>{ v.duracion_seg = Math.round(vid.duration); });
+  };
+  vid.play().catch(()=>{});
+  vid.focus();
+  P.el.requestFullscreen?.().catch(()=>{});
+  poke();
+}
+async function saveProgress(force){
+  const v = P.cur, vid = P.video; if(!v || !isFinite(vid.duration) || !vid.currentTime) return;
+  const now = Date.now(); if(!force && now - P.lastSave < 10000) return;
+  P.lastSave = now;
+  const row = { user_id:S.session.user.id, video_id:v.id, segundos:Math.floor(vid.currentTime), duracion:Math.floor(vid.duration), updated_at:new Date().toISOString() };
+  S.prog[v.id] = row;
+  await sb.from("st_progreso").upsert(row, { onConflict:"user_id,video_id" });
+}
+P.video.addEventListener("timeupdate", () => saveProgress(false));
+P.video.addEventListener("pause", () => saveProgress(true));
+P.video.addEventListener("ended", () => saveProgress(true));
+function closePlayer(){
+  if(P.el.hidden) return;
+  saveProgress(true);
+  P.video.pause();
+  if(P.hls){ P.hls.destroy(); P.hls = null; }
+  P.video.removeAttribute("src"); P.video.load();
+  P.el.hidden = true; P.cur = null;
+  if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  if(S.view === "inicio") renderHome($("#view"));
+  lastFocus?.focus?.();
+}
+$("#pClose").onclick = closePlayer;
+function poke(){ P.el.classList.remove("idle"); clearTimeout(P.idleT); P.idleT = setTimeout(() => P.el.classList.add("idle"), 3000); }
+["mousemove","touchstart","keydown"].forEach(ev => P.el.addEventListener(ev, poke));
+window.addEventListener("beforeunload", () => saveProgress(true));
+document.addEventListener("visibilitychange", () => { if(document.hidden) saveProgress(true); });
+
+/* ============ CONTROL REMOTO / TECLADO ============ */
+document.addEventListener("keydown", e => {
+  const back = e.key === "Escape" || e.key === "GoBack" || e.key === "BrowserBack" || e.keyCode === 10009 || e.keyCode === 461;
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
+  if(!P.el.hidden){
+    if(back || (e.key === "Backspace" && !typing)){ e.preventDefault(); closePlayer(); return; }
+    const vid = P.video;
+    if(e.key === "ArrowRight" && document.activeElement === vid){ vid.currentTime += 10; e.preventDefault(); }
+    else if(e.key === "ArrowLeft" && document.activeElement === vid){ vid.currentTime -= 10; e.preventDefault(); }
+    else if((e.key === "Enter" || e.key === " " || e.key === "MediaPlayPause") && document.activeElement === vid){ vid.paused ? vid.play() : vid.pause(); e.preventDefault(); }
+    else if(e.key === "ArrowUp" || e.key === "ArrowDown"){ e.preventDefault(); (document.activeElement === vid ? $("#pClose") : vid).focus(); }
+    return;
+  }
+  const modal = document.querySelector("[data-modal]");
+  if(back && modal){ e.preventDefault(); modal.close(); return; }
+  const dirs = { ArrowUp:[0,-1], ArrowDown:[0,1], ArrowLeft:[-1,0], ArrowRight:[1,0] };
+  const d = dirs[e.key]; if(!d) return;
+  if(typing && d[1] === 0) return;
+  if(document.activeElement?.tagName === "SELECT") return;
+  const scope = modal || document;
+  const items = [...scope.querySelectorAll("[data-nav]")].filter(el => el.offsetParent !== null && !el.disabled);
+  const cur = document.activeElement;
+  if(!items.includes(cur)){ e.preventDefault(); items[0]?.focus(); return; }
+  const r = cur.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
+  let best = null, bestScore = Infinity;
+  for(const el of items){
+    if(el === cur) continue;
+    const b = el.getBoundingClientRect(), x = b.left + b.width/2, y = b.top + b.height/2;
+    const dx = x - cx, dy = y - cy;
+    const along = dx*d[0] + dy*d[1]; if(along <= 4) continue;
+    const across = Math.abs(dx*d[1] + dy*d[0]);
+    const score = along + across * (d[0] ? 4 : 1.2);
+    if(score < bestScore){ bestScore = score; best = el; }
+  }
+  if(best){ e.preventDefault(); best.focus({ preventScroll:true }); best.scrollIntoView({ block:"nearest", inline:"nearest", behavior:"smooth" });
+    if(d[1] && best.closest(".row") ) best.closest(".row").scrollIntoView({ block:"center", behavior:"smooth" }); }
+});
+
+/* ============ ADMINISTRACIÓN ============ */
+function renderAdmin(v){
+  v.innerHTML = `<section class="admin wrap">
+    <h1>Administrar</h1>
+    <div class="subtabs">
+      <button data-nav data-t="videos">Videos (${S.videos.length})</button>
+      <button data-nav data-t="cats">Categorías (${S.cats.length})</button>
+      <button data-nav data-t="miembros">Clientes</button>
+    </div>
+    <div id="adm"></div></section>`;
+  v.querySelectorAll("[data-t]").forEach(b => { b.classList.toggle("on", b.dataset.t === S.adminTab); b.onclick = () => { S.adminTab = b.dataset.t; renderAdmin(v); }; });
+  const box = $("#adm");
+  if(S.adminTab === "videos") admVideos(box);
+  if(S.adminTab === "cats") admCats(box);
+  if(S.adminTab === "miembros") admMiembros(box);
+}
+
+/* ---- Videos ---- */
+function admVideos(box, editing){
+  const e = editing || {};
+  const catOpts = `<option value="">Sin categoría</option>` + S.cats.map(c => `<option value="${c.id}" ${e.categoria_id===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
+  box.innerHTML = `
+  <form class="panel" id="fVid">
+    <h2 style="margin:0">${e.id ? "Editar video" : "Subir video"}</h2>
+    <div class="form-grid">
+      <label class="f full">Título<input id="vTitulo" required value="${esc(e.titulo)}" data-nav></label>
+      <label class="f full">Descripción<textarea id="vDesc" rows="3" data-nav>${esc(e.descripcion)}</textarea></label>
+      <label class="f">Categoría<select id="vCat" data-nav>${catOpts}</select></label>
+      <div style="display:flex;gap:1.2rem;align-items:end;flex-wrap:wrap">
+        <label class="check"><input type="checkbox" id="vPub" ${e.publicado!==false?"checked":""} data-nav> Publicado</label>
+        <label class="check"><input type="checkbox" id="vDest" ${e.destacado?"checked":""} data-nav> Destacado en portada</label>
+      </div>
+      <div class="panel full" style="background:var(--bg)">
+        <strong>Video</strong>
+        ${e.video_path ? `<p class="hint">Archivo actual guardado. Sube otro solo si quieres reemplazarlo.</p>` : ""}
+        <label class="f">Archivo de video (MP4)<input type="file" id="vFile" accept="video/mp4,video/webm,video/quicktime" data-nav></label>
+        <span class="or">o</span>
+        <label class="f">URL externa (MP4 o HLS .m3u8)<input id="vUrl" type="url" placeholder="https://…" value="${esc(e.video_url)}" data-nav></label>
+        <p class="hint">El plan gratuito de Supabase acepta archivos de hasta ${LIMITE_MB} MB y 1 GB en total. Para películas largas usa una URL de Bunny Stream, Cloudflare Stream o similar.</p>
+      </div>
+      <div class="panel full" style="background:var(--bg)">
+        <strong>Miniatura (16:9)</strong>
+        <label class="f">Imagen<input type="file" id="tFile" accept="image/jpeg,image/png,image/webp" data-nav></label>
+        <span class="or">o</span>
+        <label class="f">URL de imagen<input id="tUrl" type="url" placeholder="https://…" value="${esc(e.miniatura_url)}" data-nav></label>
+      </div>
+    </div>
+    <div id="vMsg" class="msg" hidden></div>
+    <div class="actions">
+      <button class="btn primary" data-nav type="submit">${e.id ? "Guardar cambios" : "Publicar video"}</button>
+      ${e.id ? '<button type="button" class="btn ghost" id="vCancel" data-nav>Cancelar</button>' : ""}
+    </div>
+  </form>
+  <div class="panel">
+    <h2 style="margin:0">Tus videos</h2>
+    ${S.videos.length ? `<div class="tbl-wrap"><table>
+      <thead><tr><th></th><th>Título</th><th>Categoría</th><th>Duración</th><th>Estado</th><th></th></tr></thead>
+      <tbody>${S.videos.map(x => `<tr>
+        <td>${x.miniatura_url ? `<img class="mini" src="${esc(x.miniatura_url)}" alt="">` : '<div class="mini"></div>'}</td>
+        <td>${esc(x.titulo)}</td>
+        <td>${esc(S.cats.find(c=>c.id===x.categoria_id)?.nombre || "—")}</td>
+        <td style="font-variant-numeric:tabular-nums">${fmtDur(x.duracion_seg) || "—"}</td>
+        <td>${x.publicado ? '<span class="pill ok">Publicado</span>' : '<span class="pill off">Oculto</span>'} ${x.destacado ? '<span class="pill adm">Portada</span>' : ""}</td>
+        <td><div class="row-actions">
+          <button class="btn sm" data-nav data-play="${x.id}">Ver</button>
+          <button class="btn sm" data-nav data-edit="${x.id}">Editar</button>
+          <button class="btn sm danger" data-nav data-del="${x.id}">Borrar</button>
+        </div></td></tr>`).join("")}</tbody></table></div>`
+      : '<div class="empty"><strong>Todavía no hay videos.</strong>Llena el formulario de arriba para subir el primero.</div>'}
+  </div>`;
+  $("#vCancel")?.addEventListener("click", () => admVideos(box));
+  box.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { admVideos(box, S.videos.find(x => x.id === b.dataset.edit)); window.scrollTo(0,0); });
+  box.querySelectorAll("[data-play]").forEach(b => b.onclick = () => play(S.videos.find(x => x.id === b.dataset.play)));
+  box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => confirmar(b, "¿Borrar?", async () => {
+    const x = S.videos.find(y => y.id === b.dataset.del);
+    const { error } = await sb.from("st_videos").delete().eq("id", x.id);
+    if(error) return toast(error.message);
+    if(x.video_path) await sb.storage.from("st-videos").remove([x.video_path]);
+    await loadCatalog(); toast("Video borrado."); renderAdmin($("#view"));
+  }));
+  $("#fVid").onsubmit = async ev => {
+    ev.preventDefault();
+    const msg = (t, ok) => { const m=$("#vMsg"); m.hidden=false; m.className="msg "+(ok===true?"ok":ok===false?"err":""); m.textContent=t; };
+    const titulo = $("#vTitulo").value.trim();
+    const file = $("#vFile").files[0], url = $("#vUrl").value.trim();
+    const tfile = $("#tFile").files[0]; let turl = $("#tUrl").value.trim();
+    if(!titulo) return msg("Escribe un título.", false);
+    if(!file && !url && !e.video_path) return msg("Sube un archivo de video o pega una URL.", false);
+    if(file && file.size > LIMITE_MB*1024*1024 && !confirmLarge){ confirmLarge = true; return msg(`El archivo pesa ${Math.round(file.size/1048576)} MB y puede rebasar el límite de ${LIMITE_MB} MB. Toca otra vez para intentarlo de todos modos.`, false); }
+    const btn = ev.submitter; btn.disabled = true;
+    try{
+      let video_path = e.video_path || null, video_url = url || null, duracion = e.duracion_seg || null;
+      if(file){
+        msg(`Subiendo video (${Math.round(file.size/1048576)} MB)… no cierres esta página.`);
+        duracion = await leerDuracion(file);
+        const path = `${crypto.randomUUID()}.${(file.name.split(".").pop()||"mp4").toLowerCase()}`;
+        const { error } = await sb.storage.from("st-videos").upload(path, file, { contentType:file.type || "video/mp4" });
+        if(error) throw new Error("No se pudo subir el video: " + error.message);
+        if(e.video_path) await sb.storage.from("st-videos").remove([e.video_path]);
+        video_path = path; video_url = null;
+      } else if(url){ if(e.video_path){ await sb.storage.from("st-videos").remove([e.video_path]); } video_path = null; }
+      if(tfile){
+        msg("Subiendo miniatura…");
+        const tp = `${crypto.randomUUID()}.${(tfile.name.split(".").pop()||"jpg").toLowerCase()}`;
+        const { error } = await sb.storage.from("st-miniaturas").upload(tp, tfile, { contentType:tfile.type });
+        if(error) throw new Error("No se pudo subir la miniatura: " + error.message);
+        turl = sb.storage.from("st-miniaturas").getPublicUrl(tp).data.publicUrl;
+      }
+      const row = { titulo, descripcion:$("#vDesc").value.trim() || null, categoria_id:$("#vCat").value ? Number($("#vCat").value) : null,
+        publicado:$("#vPub").checked, destacado:$("#vDest").checked, miniatura_url:turl || null, video_path, video_url, duracion_seg:duracion };
+      const { error } = e.id ? await sb.from("st_videos").update(row).eq("id", e.id) : await sb.from("st_videos").insert(row);
+      if(error) throw new Error(error.message);
+      confirmLarge = false;
+      await loadCatalog(); toast(e.id ? "Cambios guardados." : "Video publicado."); renderAdmin($("#view"));
+    } catch(err){ msg(err.message, false); btn.disabled = false; }
+  };
+}
+let confirmLarge = false;
+function leerDuracion(file){
+  return new Promise(res => {
+    const v = document.createElement("video"); v.preload = "metadata";
+    v.onloadedmetadata = () => { res(isFinite(v.duration) ? Math.round(v.duration) : null); URL.revokeObjectURL(v.src); };
+    v.onerror = () => res(null);
+    v.src = URL.createObjectURL(file);
+    setTimeout(() => res(null), 8000);
+  });
+}
+function confirmar(btn, label, fn){
+  if(btn.dataset.armed){ fn(); return; }
+  const old = btn.textContent; btn.dataset.armed = "1"; btn.textContent = label;
+  setTimeout(() => { if(btn.isConnected){ delete btn.dataset.armed; btn.textContent = old; } }, 3000);
+}
+
+/* ---- Categorías ---- */
+function admCats(box){
+  box.innerHTML = `
+  <form class="panel" id="fCat">
+    <h2 style="margin:0">Nueva categoría</h2>
+    <div class="form-grid">
+      <label class="f">Nombre<input id="cNom" required placeholder="Ej. Cursos de programación" data-nav></label>
+      <label class="f">Orden en la portada<input id="cOrd" type="number" value="${S.cats.length + 1}" data-nav></label>
+    </div>
+    <div class="actions"><button class="btn primary" data-nav>Agregar</button></div>
+  </form>
+  <div class="panel">
+    <h2 style="margin:0">Categorías</h2>
+    ${S.cats.length ? `<div class="tbl-wrap"><table><thead><tr><th>Orden</th><th>Nombre</th><th>Videos</th><th></th></tr></thead><tbody>
+      ${S.cats.map(c => `<tr>
+        <td><input type="number" value="${c.orden}" data-ord="${c.id}" data-nav style="width:5em;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.3em .5em"></td>
+        <td><input value="${esc(c.nombre)}" data-nom="${c.id}" data-nav style="width:100%;min-width:10em;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.3em .5em"></td>
+        <td>${S.videos.filter(v => v.categoria_id === c.id).length}</td>
+        <td><div class="row-actions"><button class="btn sm" data-nav data-save="${c.id}">Guardar</button><button class="btn sm danger" data-nav data-del="${c.id}">Borrar</button></div></td>
+      </tr>`).join("")}</tbody></table></div>`
+      : '<div class="empty"><strong>Sin categorías.</strong>Las categorías se muestran como filas en la portada.</div>'}
+  </div>`;
+  $("#fCat").onsubmit = async ev => { ev.preventDefault();
+    const { error } = await sb.from("st_categorias").insert({ nombre:$("#cNom").value.trim(), orden:Number($("#cOrd").value)||0 });
+    if(error) return toast(error.message);
+    await loadCatalog(); toast("Categoría agregada."); renderAdmin($("#view")); };
+  box.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => { const id = b.dataset.save;
+    const { error } = await sb.from("st_categorias").update({ nombre:box.querySelector(`[data-nom="${id}"]`).value.trim(), orden:Number(box.querySelector(`[data-ord="${id}"]`).value)||0 }).eq("id", id);
+    if(error) return toast(error.message); await loadCatalog(); toast("Categoría guardada."); renderAdmin($("#view")); });
+  box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => confirmar(b, "¿Borrar?", async () => {
+    const { error } = await sb.from("st_categorias").delete().eq("id", b.dataset.del);
+    if(error) return toast(error.message); await loadCatalog(); toast("Categoría borrada. Sus videos pasan a “Otros”."); renderAdmin($("#view")); }));
+}
+
+/* ---- Clientes ---- */
+async function admMiembros(box){
+  box.innerHTML = '<div class="panel">Cargando…</div>';
+  const { data: ms, error } = await sb.from("st_miembros").select("*").order("created_at", { ascending:false });
+  if(error){ box.innerHTML = `<div class="msg err">${esc(error.message)}</div>`; return; }
+  const yo = S.miembro.email;
+  box.innerHTML = `
+  <form class="panel" id="fMem">
+    <h2 style="margin:0">Dar acceso a un cliente</h2>
+    <p class="hint">Agrega su correo. Después, el cliente entra a la plataforma, toca <b>Crear cuenta</b> con ese mismo correo y elige su contraseña.</p>
+    <div class="form-grid">
+      <label class="f">Correo<input id="mEmail" type="email" required data-nav></label>
+      <label class="f">Nombre<input id="mNom" data-nav></label>
+      <label class="f">Rol<select id="mRol" data-nav><option value="cliente">Cliente (solo ve videos)</option><option value="admin">Administrador</option></select></label>
+      <label class="f">Notas<input id="mNotas" placeholder="Ej. Grupo 3B, vence en junio" data-nav></label>
+    </div>
+    <div class="actions"><button class="btn primary" data-nav>Dar acceso</button></div>
+  </form>
+  <div class="panel">
+    <h2 style="margin:0">Personas con acceso (${ms.filter(m => m.activo).length} activas de ${ms.length})</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Notas</th><th></th></tr></thead><tbody>
+    ${ms.map(m => `<tr>
+      <td>${esc(m.nombre || "—")}</td><td>${esc(m.email)}</td>
+      <td>${m.rol === "admin" ? '<span class="pill adm">Admin</span>' : "Cliente"}</td>
+      <td>${m.activo ? '<span class="pill ok">Activo</span>' : '<span class="pill off">Suspendido</span>'}</td>
+      <td style="color:var(--muted)">${esc(m.notas || "")}</td>
+      <td>${m.email === yo ? '<span class="hint">Tú</span>' : `<div class="row-actions">
+        <button class="btn sm" data-nav data-tog="${esc(m.email)}" data-act="${m.activo}">${m.activo ? "Suspender" : "Reactivar"}</button>
+        <button class="btn sm danger" data-nav data-del="${esc(m.email)}">Quitar</button></div>`}</td>
+    </tr>`).join("")}</tbody></table></div>
+  </div>`;
+  $("#fMem").onsubmit = async ev => { ev.preventDefault();
+    const email = $("#mEmail").value.trim().toLowerCase();
+    if(!email.includes("@")) return toast("Escribe un correo válido.");
+    const { error } = await sb.from("st_miembros").upsert({ email, nombre:$("#mNom").value.trim() || null, rol:$("#mRol").value, notas:$("#mNotas").value.trim() || null, activo:true });
+    if(error) return toast(error.message);
+    toast(`Acceso dado a ${email}.`); admMiembros(box); };
+  box.querySelectorAll("[data-tog]").forEach(b => b.onclick = async () => {
+    const { error } = await sb.from("st_miembros").update({ activo: b.dataset.act !== "true" }).eq("email", b.dataset.tog);
+    if(error) return toast(error.message); toast(b.dataset.act === "true" ? "Acceso suspendido." : "Acceso reactivado."); admMiembros(box); });
+  box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => confirmar(b, "¿Quitar?", async () => {
+    const { error } = await sb.from("st_miembros").delete().eq("email", b.dataset.del);
+    if(error) return toast(error.message); toast("Acceso quitado."); admMiembros(box); }));
+}
+</script>
+</body>
+</html>
