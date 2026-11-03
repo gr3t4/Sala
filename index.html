@@ -167,6 +167,7 @@ const NOMBRE = "Sala";                       // Nombre visible de tu plataforma
 const SUPABASE_URL = "https://xbxpufhqijgrxlqzthiy.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhieHB1ZmhxaWpncnhscXp0aGl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NzIzMjUsImV4cCI6MjA4NzQ0ODMyNX0.O5COe3SjOSD4XzpIbmkUIpXCWz3iqF7YNZoeO3xNXc0";
 const LIMITE_MB = 50;                         // Límite por archivo del plan gratuito de Supabase
+const MEDIA_URL = "";                         // Dirección pública de tu servidor local (túnel), ej. "https://videos.tudominio.com"
 /* ======================================= */
 
 document.title = NOMBRE;
@@ -209,6 +210,57 @@ async function loadCatalog(){
   S.lista = new Set((l.data||[]).map(r => r.video_id));
 }
 const isAdmin = () => S.miembro?.rol === "admin";
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* Servidor local de videos (mini PC / Raspberry Pi) */
+const MEDIA = window.__SALA_LOCAL ? location.origin : MEDIA_URL.replace(/\/+$/, "");
+const esLocal = u => typeof u === "string" && u.startsWith("local:");
+const mini = v => esLocal(v.miniatura_url) ? (MEDIA ? `${MEDIA}/thumb/${v.miniatura_url.slice(6)}.jpg` : "") : (v.miniatura_url || "");
+const tok = async () => (await sb.auth.getSession()).data.session?.access_token || "";
+async function media(ruta, opts = {}){
+  let r;
+  try{ r = await fetch(MEDIA + ruta, { ...opts, headers:{ Authorization:"Bearer " + await tok(), ...(opts.headers || {}) } }); }
+  catch(_){ throw new Error("No hay conexión con el servidor local de videos. Revisa que el equipo esté prendido y en línea."); }
+  const d = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(d.error || `El servidor local respondió ${r.status}`);
+  return d;
+}
+async function mediaStatus(){
+  if(S.media !== undefined) return S.media;
+  if(!MEDIA) return S.media = { ok:false };
+  try{ const r = await fetch(MEDIA + "/api/ping"); S.media = { ok:r.ok }; } catch(_){ S.media = { ok:false, caido:true }; }
+  return S.media;
+}
+function putParte(id, off, blob, prog){
+  return tok().then(t => new Promise((ok, mal) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", `${MEDIA}/api/subidas/${id}`);
+    x.setRequestHeader("Authorization", "Bearer " + t);
+    x.setRequestHeader("x-offset", String(off));
+    x.upload.onprogress = e => e.lengthComputable && prog(e.loaded / e.total);
+    x.onload = () => { let d = {}; try{ d = JSON.parse(x.responseText); }catch(_){}
+      x.status === 200 ? ok(d.offset) : mal(new Error(d.error || `Error ${x.status}`)); };
+    x.onerror = () => mal(new Error("Se perdió la conexión con el servidor local."));
+    x.send(blob);
+  }));
+}
+async function subirLocal(file, onProgress){
+  const { id } = await media("/api/subidas", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ name:file.name, size:file.size }) });
+  const PARTE = 20 * 1024 * 1024;   // partes de 20 MB (el túnel de Cloudflare acepta hasta 100 MB por petición)
+  let off = 0, fallos = 0;
+  while(off < file.size){
+    const base = off, fin = Math.min(off + PARTE, file.size);
+    try{ off = await putParte(id, base, file.slice(base, fin), f => onProgress((base + f * (fin - base)) / file.size)); fallos = 0; }
+    catch(err){
+      if(++fallos > 5) throw err;
+      await sleep(2000 * fallos);
+      try{ off = (await media(`/api/subidas/${id}`)).offset; }catch(_){}
+    }
+  }
+  await media(`/api/subidas/${id}/terminar`, { method:"POST" });
+  return id;
+}
 /* Bunny Stream vía la función segura st-bunny (la clave vive en Supabase) */
 async function bunny(action, extra = {}){
   const { data, error } = await sb.functions.invoke("st-bunny", { body:{ action, ...extra } });
@@ -367,7 +419,7 @@ function card(v){
   const pct = p && p.duracion ? Math.min(100, p.segundos / p.duracion * 100) : 0;
   return `<button class="card" data-nav data-id="${v.id}">
     <div class="thumb">
-      ${v.miniatura_url ? `<img loading="lazy" src="${esc(v.miniatura_url)}" alt="">` : `<div class="ph">${esc(v.titulo)}</div>`}
+      ${mini(v) ? `<img loading="lazy" src="${esc(mini(v))}" alt="">` : `<div class="ph">${esc(v.titulo)}</div>`}
       ${!v.publicado ? '<span class="tag">Oculto</span>' : ""}
       ${pct > 1 ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
     </div>
@@ -389,7 +441,7 @@ function renderHome(v){
   const seguir = vids.filter(x => { const p=S.prog[x.id]; return p && p.segundos > 10 && (!p.duracion || p.segundos < p.duracion - 20); })
                      .sort((a,b) => new Date(S.prog[b.id].updated_at) - new Date(S.prog[a.id].updated_at));
   let html = `
-  <section class="hero wrap" style="${hero.miniatura_url ? `background-image:url('${esc(hero.miniatura_url)}')` : ""}">
+  <section class="hero wrap" style="${mini(hero) ? `background-image:url('${esc(mini(hero))}')` : ""}">
     <div>
       <div class="eyebrow">${esc(S.cats.find(c => c.id === hero.categoria_id)?.nombre || "Destacado")}</div>
       <h1>${esc(hero.titulo)}</h1>
@@ -426,7 +478,7 @@ function openDetail(id){
   const ov = document.createElement("div");
   ov.className = "overlay"; ov.dataset.modal = "1";
   ov.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(v.titulo)}">
-    <div class="cover" style="${v.miniatura_url ? `background-image:url('${esc(v.miniatura_url)}')` : ""}"></div>
+    <div class="cover" style="${mini(v) ? `background-image:url('${esc(mini(v))}')` : ""}"></div>
     <div class="body">
       <h3>${esc(v.titulo)}</h3>
       <div class="meta">${[S.cats.find(c=>c.id===v.categoria_id)?.nombre, fmtDur(v.duracion_seg), cont ? `Vas en ${fmtDur(p.segundos)}` : ""].filter(Boolean).map(esc).join("<span>·</span>")}</div>
@@ -458,6 +510,11 @@ function openDetail(id){
 const P = { el:$("#player"), video:$("#pVideo"), hls:null, cur:null, lastSave:0, idleT:null };
 async function play(v, fromStart){
   let src = v.video_url;
+  if(esLocal(src)){
+    if(!MEDIA) return toast("Este video está en tu servidor local, pero falta configurar su dirección (MEDIA_URL).");
+    try{ src = MEDIA + (await media(`/api/firmar/${src.slice(6)}`, { method:"POST" })).url; }
+    catch(err){ return toast(err.message); }
+  }
   if(v.video_path){
     const { data, error } = await sb.storage.from("st-videos").createSignedUrl(v.video_path, 6*3600);
     if(error) return toast("No se pudo abrir el video: " + error.message);
@@ -568,8 +625,9 @@ function renderAdmin(v){
 
 /* ---- Videos ---- */
 function admVideos(box, editing){
-  if(S.bunny === undefined){ box.innerHTML = '<div class="panel">Cargando…</div>'; bunnyStatus().then(() => admVideos(box, editing)); return; }
-  const B = S.bunny.configured;
+  if(S.bunny === undefined || S.media === undefined){ box.innerHTML = '<div class="panel">Cargando…</div>'; Promise.all([bunnyStatus(), mediaStatus()]).then(() => admVideos(box, editing)); return; }
+  const B = S.bunny.configured, L = S.media.ok;
+  const destinos = [L && { v:"local", t:"Mi servidor local" }, B && { v:"bunny", t:"Bunny Stream" }, { v:"supabase", t:`Supabase (hasta ${LIMITE_MB} MB)` }].filter(Boolean);
   const e = editing || {};
   const catOpts = `<option value="">Sin categoría</option>` + S.cats.map(c => `<option value="${c.id}" ${e.categoria_id===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
   box.innerHTML = `
@@ -586,6 +644,9 @@ function admVideos(box, editing){
       <div class="panel full" style="background:var(--bg)">
         <strong>Video</strong>
         ${e.video_path ? `<p class="hint">Archivo actual guardado. Sube otro solo si quieres reemplazarlo.</p>` : ""}
+        ${MEDIA && !L ? '<div class="msg err">No pude conectar con tu servidor local de videos. Revisa que el equipo esté prendido y que el túnel esté activo.</div>' : ""}
+        ${L ? '<p class="hint"><span class="pill ok">Servidor local conectado</span> Los videos se guardan en tu equipo y se procesan ahí. MP4 en H.264 queda listo en segundos; otros formatos tardan más.</p>' : ""}
+        ${destinos.length > 1 ? `<label class="f">Subir el archivo a<select id="vDestino" data-nav>${destinos.map(d => `<option value="${d.v}">${esc(d.t)}</option>`).join("")}</select></label>` : ""}
         <label class="f">Archivo de video (MP4)<input type="file" id="vFile" accept="video/mp4,video/webm,video/quicktime" data-nav></label>
         <span class="or">o</span>
         <label class="f">URL externa (MP4 o HLS .m3u8)<input id="vUrl" type="url" placeholder="https://…" value="${esc(e.video_url)}" data-nav></label>
@@ -613,7 +674,7 @@ function admVideos(box, editing){
     ${S.videos.length ? `<div class="tbl-wrap"><table>
       <thead><tr><th></th><th>Título</th><th>Categoría</th><th>Duración</th><th>Estado</th><th></th></tr></thead>
       <tbody>${S.videos.map(x => `<tr>
-        <td>${x.miniatura_url ? `<img class="mini" src="${esc(x.miniatura_url)}" alt="">` : '<div class="mini"></div>'}</td>
+        <td>${mini(x) ? `<img class="mini" src="${esc(mini(x))}" alt="">` : '<div class="mini"></div>'}</td>
         <td>${esc(x.titulo)}</td>
         <td>${esc(S.cats.find(c=>c.id===x.categoria_id)?.nombre || "—")}</td>
         <td style="font-variant-numeric:tabular-nums">${fmtDur(x.duracion_seg) || "—"}</td>
@@ -638,6 +699,7 @@ function admVideos(box, editing){
     if(error) return toast(error.message);
     if(x.video_path) await sb.storage.from("st-videos").remove([x.video_path]);
     if(x.bunny_id) await bunny("delete", { guid:x.bunny_id }).catch(()=>{});
+    if(esLocal(x.video_url)) await media(`/api/videos/${x.video_url.slice(6)}`, { method:"DELETE" }).catch(()=>{});
     await loadCatalog(); toast("Video borrado."); renderAdmin($("#view"));
   }));
   $("#fVid").onsubmit = async ev => {
@@ -648,11 +710,22 @@ function admVideos(box, editing){
     const tfile = $("#tFile").files[0]; let turl = $("#tUrl").value.trim();
     if(!titulo) return msg("Escribe un título.", false);
     if(!file && !url && !e.video_path) return msg("Sube un archivo de video o pega una URL.", false);
-    if(file && !B && file.size > LIMITE_MB*1024*1024 && !confirmLarge){ confirmLarge = true; return msg(`El archivo pesa ${Math.round(file.size/1048576)} MB y puede rebasar el límite de ${LIMITE_MB} MB. Toca otra vez para intentarlo de todos modos.`, false); }
+    const destino = $("#vDestino")?.value || destinos[0].v;
+    if(file && destino === "supabase" && file.size > LIMITE_MB*1024*1024 && !confirmLarge){ confirmLarge = true; return msg(`El archivo pesa ${Math.round(file.size/1048576)} MB y puede rebasar el límite de ${LIMITE_MB} MB. Toca otra vez para intentarlo de todos modos.`, false); }
     const btn = ev.submitter; btn.disabled = true;
     try{
       let video_path = e.video_path || null, video_url = url || null, duracion = e.duracion_seg || null, bunny_id = e.bunny_id || null;
-      if(file && B){
+      if(file && destino === "local"){
+        duracion = await leerDuracion(file);
+        const bar = $("#vProg"), fill = bar.firstElementChild; bar.hidden = false;
+        const mb = Math.round(file.size/1048576);
+        msg(`Subiendo a tu servidor (${mb} MB)… no cierres esta página.`);
+        const id = await subirLocal(file, f => { fill.style.width = (f*100).toFixed(1) + "%"; msg(`Subiendo a tu servidor: ${Math.round(f*100)} % de ${mb} MB… no cierres esta página.`); });
+        if(e.video_path) await sb.storage.from("st-videos").remove([e.video_path]);
+        if(e.bunny_id) await bunny("delete", { guid:e.bunny_id }).catch(()=>{});
+        video_path = null; video_url = "local:" + id; bunny_id = null;
+        if(!tfile && (!turl || esLocal(turl))) turl = "local:" + id;
+      } else if(file && destino === "bunny"){
         duracion = await leerDuracion(file);
         const bar = $("#vProg"), fill = bar.firstElementChild; bar.hidden = false;
         msg(`Subiendo a Bunny (${Math.round(file.size/1048576)} MB)… no cierres esta página.`);
@@ -664,7 +737,7 @@ function admVideos(box, editing){
       } else if(file){
         msg(`Subiendo video (${Math.round(file.size/1048576)} MB)… no cierres esta página.`);
         duracion = await leerDuracion(file);
-        const path = `${crypto.randomUUID()}.${(file.name.split(".").pop()||"mp4").toLowerCase()}`;
+        const path = `${uid()}.${(file.name.split(".").pop()||"mp4").toLowerCase()}`;
         const { error } = await sb.storage.from("st-videos").upload(path, file, { contentType:file.type || "video/mp4" });
         if(error) throw new Error("No se pudo subir el video: " + error.message);
         if(e.video_path) await sb.storage.from("st-videos").remove([e.video_path]);
@@ -672,17 +745,18 @@ function admVideos(box, editing){
       } else if(url && url !== e.video_url){ if(e.video_path){ await sb.storage.from("st-videos").remove([e.video_path]); } video_path = null; bunny_id = null; }
       if(tfile){
         msg("Subiendo miniatura…");
-        const tp = `${crypto.randomUUID()}.${(tfile.name.split(".").pop()||"jpg").toLowerCase()}`;
+        const tp = `${uid()}.${(tfile.name.split(".").pop()||"jpg").toLowerCase()}`;
         const { error } = await sb.storage.from("st-miniaturas").upload(tp, tfile, { contentType:tfile.type });
         if(error) throw new Error("No se pudo subir la miniatura: " + error.message);
         turl = sb.storage.from("st-miniaturas").getPublicUrl(tp).data.publicUrl;
       }
+      if(esLocal(e.video_url) && video_url !== e.video_url) await media(`/api/videos/${e.video_url.slice(6)}`, { method:"DELETE" }).catch(()=>{});
       const row = { titulo, descripcion:$("#vDesc").value.trim() || null, categoria_id:$("#vCat").value ? Number($("#vCat").value) : null,
         publicado:$("#vPub").checked, destacado:$("#vDest").checked, miniatura_url:turl || null, video_path, video_url, duracion_seg:duracion, bunny_id };
       const { error } = e.id ? await sb.from("st_videos").update(row).eq("id", e.id) : await sb.from("st_videos").insert(row);
       if(error) throw new Error(error.message);
       confirmLarge = false;
-      await loadCatalog(); toast(e.id ? "Cambios guardados." : "Video publicado."); renderAdmin($("#view"));
+      await loadCatalog(); toast(esLocal(video_url) && file ? "Video subido. Tu servidor lo está procesando; estará listo en unos minutos." : e.id ? "Cambios guardados." : "Video publicado."); renderAdmin($("#view"));
     } catch(err){ msg(err.message, false); btn.disabled = false; }
   };
 }
