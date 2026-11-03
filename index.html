@@ -193,7 +193,7 @@ async function route(session){
   const email = (session.user.email||"").toLowerCase();
   const { data: m } = await sb.from("st_miembros").select("*").eq("email", email).maybeSingle();
   S.miembro = m;
-  if(!m || !m.activo) return renderNoAccess(email);
+  if(!m || !m.activo) return renderNoAccess(email, m);
   await loadCatalog();
   renderShell();
 }
@@ -302,9 +302,10 @@ function renderAuth(mode="entrar", note=""){
         <button type="button" data-nav data-mode="entrar" class="${mode==="entrar"?"on":""}">Entrar</button>
         <button type="button" data-nav data-mode="crear" class="${mode==="crear"?"on":""}">Crear cuenta</button>
       </div>
+      ${mode==="crear" ? '<label class="f">Tu nombre<input id="aNom" autocomplete="name" required maxlength="80" data-nav></label>' : ""}
       <label class="f">Correo<input id="aEmail" type="email" autocomplete="email" required data-nav></label>
       <label class="f">Contraseña<input id="aPass" type="password" autocomplete="${mode==="crear"?"new-password":"current-password"}" minlength="6" required data-nav></label>
-      ${mode==="crear" ? '<p class="hint">Usa el mismo correo con el que te dieron acceso.</p>' : ""}
+      ${mode==="crear" ? '<p class="hint">Al crear tu cuenta se envía una solicitud. Podrás ver los videos en cuanto el administrador la apruebe.</p>' : ""}
       <div id="aMsg" ${note?"":"hidden"} class="msg ok">${esc(note)}</div>
       <button class="btn primary" data-nav type="submit" style="justify-content:center">${mode==="crear"?"Crear cuenta":"Entrar"}</button>
       ${mode==="entrar" ? '<button type="button" class="btn ghost sm" id="aReset" data-nav style="justify-content:center">Olvidé mi contraseña</button>' : ""}
@@ -324,7 +325,9 @@ function renderAuth(mode="entrar", note=""){
     if(!email || password.length < 6) return msg("Escribe tu correo y una contraseña de al menos 6 caracteres.");
     const btn = e.submitter; btn.disabled = true;
     if(mode === "crear"){
-      const { data, error } = await sb.auth.signUp({ email, password, options:{ emailRedirectTo: location.origin + location.pathname } });
+      const nombre = $("#aNom").value.trim();
+      if(!nombre){ btn.disabled = false; return msg("Escribe tu nombre."); }
+      const { data, error } = await sb.auth.signUp({ email, password, options:{ data:{ nombre }, emailRedirectTo: location.origin + location.pathname } });
       btn.disabled = false;
       if(error) return msg(traducir(error.message));
       if(!data.session) msg("Cuenta creada. Revisa tu correo y confirma para poder entrar.", true);
@@ -340,6 +343,7 @@ function traducir(m){
   if(/Invalid login/i.test(m)) return "Correo o contraseña incorrectos.";
   if(/already registered/i.test(m)) return "Ese correo ya tiene cuenta. Entra con tu contraseña.";
   if(/Email not confirmed/i.test(m)) return "Confirma tu correo con el enlace que te enviamos.";
+  if(/rate limit/i.test(m)) return "Se alcanzó el límite de correos por hora. Intenta más tarde o pide al administrador que cree tu cuenta.";
   return m;
 }
 
@@ -358,13 +362,21 @@ sb.auth.onAuthStateChange(async (ev) => {
   }, 10);
 });
 
-function renderNoAccess(email){
+async function renderNoAccess(email, m){
+  if(!m){
+    // Primera vez: enviar la solicitud de acceso al administrador
+    const nombre = S.session?.user?.user_metadata?.nombre || null;
+    const { error } = await sb.from("st_miembros").insert({ email, nombre, rol:"cliente", activo:false, pendiente:true });
+    m = error ? null : { pendiente:true };
+  }
+  const suspendido = m && !m.pendiente;
   app.innerHTML = `
   <main class="auth wrap"><div class="auth-box" style="text-align:center">
     <div class="logo">${esc(NOMBRE)}</div>
-    <p>Tu cuenta <strong>${esc(email)}</strong> todavía no tiene acceso.</p>
-    <p class="hint">Pide al administrador que te dé de alta con este correo. Cuando lo haga, vuelve a entrar.</p>
-    <button class="btn ghost" id="nRetry" data-nav style="justify-content:center">Ya me dieron acceso</button>
+    ${suspendido
+      ? `<p>El acceso de <strong>${esc(email)}</strong> está suspendido.</p><p class="hint">Si crees que es un error, comunícate con el administrador.</p>`
+      : `<p>¡Listo! Tu solicitud de acceso para <strong>${esc(email)}</strong> fue enviada.</p><p class="hint">Podrás ver los videos en cuanto el administrador la apruebe. Vuelve a entrar más tarde.</p>`}
+    <button class="btn ghost" id="nRetry" data-nav style="justify-content:center">Revisar de nuevo</button>
     <button class="btn ghost sm" id="nOut" data-nav style="justify-content:center">Cerrar sesión</button>
     <details style="margin-top:1.5rem;text-align:left;color:var(--muted);font-size:.85em">
       <summary>¿Eres el dueño de la plataforma?</summary>
@@ -391,7 +403,7 @@ function renderShell(){
     <nav class="nav">
       <button data-nav data-view="inicio">Inicio</button>
       <button data-nav data-view="milista">Mi lista</button>
-      ${isAdmin() ? '<button data-nav data-view="admin">Administrar</button>' : ""}
+      ${isAdmin() ? '<button data-nav data-view="admin">Administrar <span id="pendBadge" class="pill adm" hidden></span></button>' : ""}
       <button data-nav id="bOut">Salir</button>
     </nav>
     <input class="search" id="q" type="search" placeholder="Buscar videos" data-nav value="${esc(S.q)}">
@@ -401,6 +413,12 @@ function renderShell(){
   $("#bOut").onclick = () => sb.auth.signOut();
   $("#q").oninput = e => { S.q = e.target.value; go(S.q ? "buscar" : "inicio", true); };
   go(S.view === "buscar" ? "inicio" : S.view);
+  if(isAdmin()) contarPendientes();
+}
+async function contarPendientes(){
+  const { count } = await sb.from("st_miembros").select("email", { count:"exact", head:true }).eq("pendiente", true);
+  const b = $("#pendBadge"); if(!b) return;
+  b.hidden = !count; b.textContent = count ? `${count} nueva${count > 1 ? "s" : ""}` : "";
 }
 function go(view, keepFocus){
   S.view = view;
@@ -838,42 +856,97 @@ function admCats(box){
 }
 
 /* ---- Clientes ---- */
+function genPass(){
+  const abc = "abcdefghjkmnpqrstuvwxyz23456789";
+  const r = crypto.getRandomValues(new Uint32Array(10));
+  return Array.from(r, n => abc[n % abc.length]).join("").replace(/(.{5})/, "$1-");
+}
+async function cuentas(action, body){
+  const { data, error } = await sb.functions.invoke("st-cuentas", { body:{ action, ...body } });
+  if(error){ let m = error.message; try{ m = (await error.context.json()).error || m; }catch(_){} throw new Error(m); }
+  if(data?.error) throw new Error(data.error);
+  return data;
+}
+function mostrarCredenciales(email, password){
+  const el = $("#mCred"); if(!el) return;
+  const texto = `Tu acceso a ${NOMBRE}:\n${location.origin}\nCorreo: ${email}\nContraseña: ${password}`;
+  el.hidden = false;
+  el.className = "msg ok";
+  el.innerHTML = `<strong>Comparte estos datos con tu cliente:</strong>
+    <pre id="mCredTxt" style="white-space:pre-wrap;margin:.5em 0;font-family:ui-monospace,Menlo,monospace;color:var(--fg);user-select:all">${esc(texto)}</pre>
+    <button type="button" class="btn sm" id="mCopy" data-nav>Copiar</button>`;
+  $("#mCopy").onclick = async () => {
+    try{ await navigator.clipboard.writeText(texto); toast("Copiado."); }
+    catch(_){ const r = document.createRange(); r.selectNodeContents($("#mCredTxt")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast("Texto seleccionado. Cópialo con tu teclado."); }
+  };
+  el.scrollIntoView({ block:"center", behavior:"smooth" });
+}
 async function admMiembros(box){
   box.innerHTML = '<div class="panel">Cargando…</div>';
   const { data: ms, error } = await sb.from("st_miembros").select("*").order("created_at", { ascending:false });
   if(error){ box.innerHTML = `<div class="msg err">${esc(error.message)}</div>`; return; }
   const yo = S.miembro.email;
+  const pend = ms.filter(m => m.pendiente);
+  const miembros = ms.filter(m => !m.pendiente);
   box.innerHTML = `
+  ${pend.length ? `<div class="panel" style="border:1px solid var(--accent)">
+    <h2 style="margin:0">Solicitudes pendientes (${pend.length})</h2>
+    <p class="hint">Personas que crearon su cuenta y esperan tu aprobación.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Correo</th><th>Fecha</th><th></th></tr></thead><tbody>
+    ${pend.map(m => `<tr><td>${esc(m.nombre || "—")}</td><td>${esc(m.email)}</td>
+      <td style="color:var(--muted);font-variant-numeric:tabular-nums">${new Date(m.created_at).toLocaleDateString("es-MX", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })}</td>
+      <td><div class="row-actions"><button class="btn sm primary" data-nav data-ok="${esc(m.email)}">Aprobar</button>
+      <button class="btn sm danger" data-nav data-no="${esc(m.email)}">Rechazar</button></div></td></tr>`).join("")}
+    </tbody></table></div></div>` : ""}
   <form class="panel" id="fMem">
-    <h2 style="margin:0">Dar acceso a un cliente</h2>
-    <p class="hint">Agrega su correo. Después, el cliente entra a la plataforma, toca <b>Crear cuenta</b> con ese mismo correo y elige su contraseña.</p>
+    <h2 style="margin:0">Crear una cuenta tú mismo</h2>
+    <div id="mCred" hidden></div>
+    <p class="hint">Crea su cuenta con una contraseña inicial y compártele sus datos de acceso. No se envía ningún correo.</p>
     <div class="form-grid">
       <label class="f">Correo<input id="mEmail" type="email" required data-nav></label>
       <label class="f">Nombre<input id="mNom" data-nav></label>
       <label class="f">Rol<select id="mRol" data-nav><option value="cliente">Cliente (solo ve videos)</option><option value="admin">Administrador</option></select></label>
       <label class="f">Notas<input id="mNotas" placeholder="Ej. Grupo 3B, vence en junio" data-nav></label>
+      <label class="f">Contraseña inicial
+        <span style="display:flex;gap:.4rem"><input id="mPass" minlength="6" value="${genPass()}" data-nav style="flex:1;font-family:ui-monospace,Menlo,monospace"><button type="button" class="btn sm" id="mGen" data-nav>Otra</button></span></label>
     </div>
     <div class="actions"><button class="btn primary" data-nav>Dar acceso</button></div>
   </form>
   <div class="panel">
-    <h2 style="margin:0">Personas con acceso (${ms.filter(m => m.activo).length} activas de ${ms.length})</h2>
+    <h2 style="margin:0">Personas con acceso (${miembros.filter(m => m.activo).length} activas de ${miembros.length})</h2>
     <div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Notas</th><th></th></tr></thead><tbody>
-    ${ms.map(m => `<tr>
+    ${miembros.map(m => `<tr>
       <td>${esc(m.nombre || "—")}</td><td>${esc(m.email)}</td>
       <td>${m.rol === "admin" ? '<span class="pill adm">Admin</span>' : "Cliente"}</td>
       <td>${m.activo ? '<span class="pill ok">Activo</span>' : '<span class="pill off">Suspendido</span>'}</td>
       <td style="color:var(--muted)">${esc(m.notas || "")}</td>
       <td>${m.email === yo ? '<span class="hint">Tú</span>' : `<div class="row-actions">
         <button class="btn sm" data-nav data-tog="${esc(m.email)}" data-act="${m.activo}">${m.activo ? "Suspender" : "Reactivar"}</button>
+        <button class="btn sm" data-nav data-pw="${esc(m.email)}">Nueva contraseña</button>
         <button class="btn sm danger" data-nav data-del="${esc(m.email)}">Quitar</button></div>`}</td>
     </tr>`).join("")}</tbody></table></div>
   </div>`;
   $("#fMem").onsubmit = async ev => { ev.preventDefault();
     const email = $("#mEmail").value.trim().toLowerCase();
     if(!email.includes("@")) return toast("Escribe un correo válido.");
-    const { error } = await sb.from("st_miembros").upsert({ email, nombre:$("#mNom").value.trim() || null, rol:$("#mRol").value, notas:$("#mNotas").value.trim() || null, activo:true });
-    if(error) return toast(error.message);
-    toast(`Acceso dado a ${email}.`); admMiembros(box); };
+    const password = $("#mPass").value.trim(), btn = ev.submitter; btn.disabled = true;
+    try{
+      await cuentas("crear", { email, password, nombre:$("#mNom").value.trim(), rol:$("#mRol").value, notas:$("#mNotas").value.trim() });
+      await admMiembros(box);
+      mostrarCredenciales(email, password);
+      toast(`Cuenta lista para ${email}.`);
+    } catch(err){ toast(err.message); btn.disabled = false; } };
+  $("#mGen").onclick = () => { $("#mPass").value = genPass(); };
+  box.querySelectorAll("[data-ok]").forEach(b => b.onclick = async () => {
+    const { error } = await sb.from("st_miembros").update({ activo:true, pendiente:false }).eq("email", b.dataset.ok);
+    if(error) return toast(error.message); toast(`Acceso aprobado para ${b.dataset.ok}.`); admMiembros(box); contarPendientes(); });
+  box.querySelectorAll("[data-no]").forEach(b => b.onclick = () => confirmar(b, "¿Rechazar?", async () => {
+    const { error } = await sb.from("st_miembros").delete().eq("email", b.dataset.no);
+    if(error) return toast(error.message); toast("Solicitud rechazada."); admMiembros(box); contarPendientes(); }));
+  box.querySelectorAll("[data-pw]").forEach(b => b.onclick = () => confirmar(b, "¿Cambiar?", async () => {
+    const password = genPass();
+    try{ await cuentas("password", { email:b.dataset.pw, password }); mostrarCredenciales(b.dataset.pw, password); toast("Contraseña cambiada."); }
+    catch(err){ toast(err.message); } }));
   box.querySelectorAll("[data-tog]").forEach(b => b.onclick = async () => {
     const { error } = await sb.from("st_miembros").update({ activo: b.dataset.act !== "true" }).eq("email", b.dataset.tog);
     if(error) return toast(error.message); toast(b.dataset.act === "true" ? "Acceso suspendido." : "Acceso reactivado."); admMiembros(box); });
