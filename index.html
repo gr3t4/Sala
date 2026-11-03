@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Figtree:wght@400;500;600;700&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js"></script>
 <style>
 /* Sala de proyección: fondo tinta, luz ámbar del proyector como único acento; filas horizontales tipo cartelera */
 :root{
@@ -176,7 +177,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const S = { session:null, miembro:null, cats:[], videos:[], prog:{}, lista:new Set(), view:"inicio", q:"", adminTab:"videos" };
 
 function toast(t){ const el=$("#toast"); el.textContent=t; el.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>el.hidden=true,3200); }
-function fmtDur(s){ if(!s) return ""; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return h?`${h} h ${m} min`:`${Math.max(m,1)} min`; }
+function fmtDur(s){ if(!s) return ""; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return h?(m?`${h} h ${m} min`:`${h} h`):`${Math.max(m,1)} min`; }
 function focusFirst(root=document){ const el=root.querySelector("[data-nav]"); el && el.focus({preventScroll:false}); }
 
 /* ============ SESIÓN ============ */
@@ -208,6 +209,33 @@ async function loadCatalog(){
   S.lista = new Set((l.data||[]).map(r => r.video_id));
 }
 const isAdmin = () => S.miembro?.rol === "admin";
+/* Bunny Stream vía la función segura st-bunny (la clave vive en Supabase) */
+async function bunny(action, extra = {}){
+  const { data, error } = await sb.functions.invoke("st-bunny", { body:{ action, ...extra } });
+  if(error){ let m = error.message; try{ m = (await error.context.json()).error || m; }catch(_){} throw new Error(m); }
+  if(data?.error) throw new Error(data.error);
+  return data;
+}
+async function bunnyStatus(){
+  if(S.bunny !== undefined) return S.bunny;
+  try{ S.bunny = await bunny("status"); } catch(_){ S.bunny = { configured:false }; }
+  return S.bunny;
+}
+function subirABunny(file, titulo, onProgress){
+  return bunny("create", { title: titulo }).then(info => new Promise((resolve, reject) => {
+    const up = new tus.Upload(file, {
+      endpoint: "https://video.bunnycdn.com/tusupload",
+      retryDelays: [0, 3000, 10000, 30000],
+      chunkSize: 50 * 1024 * 1024,
+      headers: { AuthorizationSignature: info.signature, AuthorizationExpire: String(info.expire), VideoId: info.guid, LibraryId: String(info.libraryId) },
+      metadata: { filetype: file.type || "video/mp4", title: titulo },
+      onError: err => reject(new Error("La subida a Bunny falló: " + (err.message || err))),
+      onProgress: (sent, total) => onProgress(sent / total),
+      onSuccess: () => resolve(info)
+    });
+    up.start();
+  }));
+}
 const visibles = () => S.videos.filter(v => v.publicado);
 
 /* ============ LOGIN ============ */
@@ -540,6 +568,8 @@ function renderAdmin(v){
 
 /* ---- Videos ---- */
 function admVideos(box, editing){
+  if(S.bunny === undefined){ box.innerHTML = '<div class="panel">Cargando…</div>'; bunnyStatus().then(() => admVideos(box, editing)); return; }
+  const B = S.bunny.configured;
   const e = editing || {};
   const catOpts = `<option value="">Sin categoría</option>` + S.cats.map(c => `<option value="${c.id}" ${e.categoria_id===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
   box.innerHTML = `
@@ -559,7 +589,9 @@ function admVideos(box, editing){
         <label class="f">Archivo de video (MP4)<input type="file" id="vFile" accept="video/mp4,video/webm,video/quicktime" data-nav></label>
         <span class="or">o</span>
         <label class="f">URL externa (MP4 o HLS .m3u8)<input id="vUrl" type="url" placeholder="https://…" value="${esc(e.video_url)}" data-nav></label>
-        <p class="hint">El plan gratuito de Supabase acepta archivos de hasta ${LIMITE_MB} MB y 1 GB en total. Para películas largas usa una URL de Bunny Stream, Cloudflare Stream o similar.</p>
+        ${B ? '<p class="hint"><span class="pill ok">Bunny conectado</span> Los archivos se suben a Bunny Stream, sin límite de tamaño práctico. Después de subir, Bunny tarda unos minutos en procesar el video antes de que se pueda ver.</p>'
+       : `<p class="hint">El plan gratuito de Supabase acepta archivos de hasta ${LIMITE_MB} MB. Conecta Bunny para subir videos grandes.</p>`}
+        <div id="vProg" hidden style="height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden"><i style="display:block;height:100%;width:0;background:var(--accent);transition:width .3s"></i></div>
       </div>
       <div class="panel full" style="background:var(--bg)">
         <strong>Miniatura (16:9)</strong>
@@ -590,7 +622,11 @@ function admVideos(box, editing){
           <button class="btn sm danger" data-nav data-del="${x.id}">Borrar</button>
         </div></td></tr>`).join("")}</tbody></table></div>`
       : '<div class="empty"><strong>Todavía no hay videos.</strong>Llena el formulario de arriba para subir el primero.</div>'}
-  </div>`;
+  </div>
+  ${B ? `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+      <h2 style="margin:0">Importar desde Bunny</h2><button class="btn sm" data-nav id="bLoad">Ver videos en Bunny</button></div>
+      <p class="hint">Videos que subiste directo en el panel de Bunny y todavía no están en Sala.</p><div id="bList"></div></div>` : ""}`;
+  $("#bLoad")?.addEventListener("click", () => listarBunny($("#bList")));
   $("#vCancel")?.addEventListener("click", () => admVideos(box));
   box.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { admVideos(box, S.videos.find(x => x.id === b.dataset.edit)); window.scrollTo(0,0); });
   box.querySelectorAll("[data-play]").forEach(b => b.onclick = () => play(S.videos.find(x => x.id === b.dataset.play)));
@@ -599,6 +635,7 @@ function admVideos(box, editing){
     const { error } = await sb.from("st_videos").delete().eq("id", x.id);
     if(error) return toast(error.message);
     if(x.video_path) await sb.storage.from("st-videos").remove([x.video_path]);
+    if(x.bunny_id) await bunny("delete", { guid:x.bunny_id }).catch(()=>{});
     await loadCatalog(); toast("Video borrado."); renderAdmin($("#view"));
   }));
   $("#fVid").onsubmit = async ev => {
@@ -609,11 +646,20 @@ function admVideos(box, editing){
     const tfile = $("#tFile").files[0]; let turl = $("#tUrl").value.trim();
     if(!titulo) return msg("Escribe un título.", false);
     if(!file && !url && !e.video_path) return msg("Sube un archivo de video o pega una URL.", false);
-    if(file && file.size > LIMITE_MB*1024*1024 && !confirmLarge){ confirmLarge = true; return msg(`El archivo pesa ${Math.round(file.size/1048576)} MB y puede rebasar el límite de ${LIMITE_MB} MB. Toca otra vez para intentarlo de todos modos.`, false); }
+    if(file && !B && file.size > LIMITE_MB*1024*1024 && !confirmLarge){ confirmLarge = true; return msg(`El archivo pesa ${Math.round(file.size/1048576)} MB y puede rebasar el límite de ${LIMITE_MB} MB. Toca otra vez para intentarlo de todos modos.`, false); }
     const btn = ev.submitter; btn.disabled = true;
     try{
-      let video_path = e.video_path || null, video_url = url || null, duracion = e.duracion_seg || null;
-      if(file){
+      let video_path = e.video_path || null, video_url = url || null, duracion = e.duracion_seg || null, bunny_id = e.bunny_id || null;
+      if(file && B){
+        duracion = await leerDuracion(file);
+        const bar = $("#vProg"), fill = bar.firstElementChild; bar.hidden = false;
+        msg(`Subiendo a Bunny (${Math.round(file.size/1048576)} MB)… no cierres esta página.`);
+        const info = await subirABunny(file, titulo, f => { fill.style.width = (f*100).toFixed(1) + "%"; msg(`Subiendo a Bunny: ${Math.round(f*100)} % de ${Math.round(file.size/1048576)} MB… no cierres esta página.`); });
+        if(e.video_path) await sb.storage.from("st-videos").remove([e.video_path]);
+        if(e.bunny_id) await bunny("delete", { guid:e.bunny_id }).catch(()=>{});
+        video_path = null; video_url = info.hls; bunny_id = info.guid;
+        if(!tfile && !turl) turl = info.thumb;
+      } else if(file){
         msg(`Subiendo video (${Math.round(file.size/1048576)} MB)… no cierres esta página.`);
         duracion = await leerDuracion(file);
         const path = `${crypto.randomUUID()}.${(file.name.split(".").pop()||"mp4").toLowerCase()}`;
@@ -621,7 +667,7 @@ function admVideos(box, editing){
         if(error) throw new Error("No se pudo subir el video: " + error.message);
         if(e.video_path) await sb.storage.from("st-videos").remove([e.video_path]);
         video_path = path; video_url = null;
-      } else if(url){ if(e.video_path){ await sb.storage.from("st-videos").remove([e.video_path]); } video_path = null; }
+      } else if(url && url !== e.video_url){ if(e.video_path){ await sb.storage.from("st-videos").remove([e.video_path]); } video_path = null; bunny_id = null; }
       if(tfile){
         msg("Subiendo miniatura…");
         const tp = `${crypto.randomUUID()}.${(tfile.name.split(".").pop()||"jpg").toLowerCase()}`;
@@ -630,7 +676,7 @@ function admVideos(box, editing){
         turl = sb.storage.from("st-miniaturas").getPublicUrl(tp).data.publicUrl;
       }
       const row = { titulo, descripcion:$("#vDesc").value.trim() || null, categoria_id:$("#vCat").value ? Number($("#vCat").value) : null,
-        publicado:$("#vPub").checked, destacado:$("#vDest").checked, miniatura_url:turl || null, video_path, video_url, duracion_seg:duracion };
+        publicado:$("#vPub").checked, destacado:$("#vDest").checked, miniatura_url:turl || null, video_path, video_url, duracion_seg:duracion, bunny_id };
       const { error } = e.id ? await sb.from("st_videos").update(row).eq("id", e.id) : await sb.from("st_videos").insert(row);
       if(error) throw new Error(error.message);
       confirmLarge = false;
@@ -639,6 +685,33 @@ function admVideos(box, editing){
   };
 }
 let confirmLarge = false;
+const BUNNY_ESTADO = { 0:"Creado", 1:"Subido", 2:"Procesando", 3:"Procesando", 4:"Listo", 5:"Error", 6:"Subida fallida" };
+async function listarBunny(box){
+  box.innerHTML = '<p class="hint">Consultando Bunny…</p>';
+  let items;
+  try{ items = (await bunny("list")).items; } catch(err){ box.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; return; }
+  const ya = new Set(S.videos.map(v => v.bunny_id).filter(Boolean));
+  const nuevos = items.filter(i => !ya.has(i.guid));
+  if(!nuevos.length){ box.innerHTML = '<div class="empty">Todos tus videos de Bunny ya están en Sala.</div>'; return; }
+  const catOpts = `<option value="">Sin categoría</option>` + S.cats.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join("");
+  box.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th></th><th>Título</th><th>Duración</th><th>Estado</th><th>Categoría</th><th></th></tr></thead><tbody>
+    ${nuevos.map(i => `<tr>
+      <td><img class="mini" src="${esc(i.thumb)}" alt="" onerror="this.style.visibility='hidden'"></td>
+      <td>${esc(i.title)}</td>
+      <td style="font-variant-numeric:tabular-nums">${fmtDur(i.length) || "—"}</td>
+      <td>${i.status === 4 ? '<span class="pill ok">Listo</span>' : `<span class="pill off">${BUNNY_ESTADO[i.status] || "—"}${i.status===2||i.status===3 ? " " + (i.encodeProgress||0) + " %" : ""}</span>`}</td>
+      <td><select data-cat="${i.guid}" data-nav style="background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.3em .5em">${catOpts}</select></td>
+      <td><button class="btn sm primary" data-nav data-imp="${i.guid}">Agregar</button></td></tr>`).join("")}
+  </tbody></table></div>`;
+  box.querySelectorAll("[data-imp]").forEach(b => b.onclick = async () => {
+    const i = nuevos.find(x => x.guid === b.dataset.imp); b.disabled = true;
+    const cat = box.querySelector(`[data-cat="${i.guid}"]`).value;
+    const { error } = await sb.from("st_videos").insert({ titulo:i.title || "Sin título", bunny_id:i.guid, video_url:i.hls, miniatura_url:i.thumb,
+      duracion_seg:i.length ? Math.round(i.length) : null, categoria_id:cat ? Number(cat) : null, publicado:true });
+    if(error){ b.disabled = false; return toast(error.message); }
+    await loadCatalog(); toast(`“${i.title}” agregado.`); b.closest("tr").remove();
+  });
+}
 function leerDuracion(file){
   return new Promise(res => {
     const v = document.createElement("video"); v.preload = "metadata";
